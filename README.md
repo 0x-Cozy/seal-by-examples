@@ -4,16 +4,16 @@
 
 3. Fill in env 
 
-npx tsx encrypt.ts
+4. npx tsx encrypt.ts
 
-4. Fill in env with BLOB_ID
+5. Fill in env with BLOB_ID
 
-npx tsx publish.ts
+6. npx tsx publish.ts
 
-npx tsx decrypt.ts
-
-0xe8787bde918074d22cdba51660075743fd4c1629940ff1700c6fc03872bb312b
+7. npx tsx decrypt.ts
 
 
 
 sui client call --package 0x98fdf0aa35ba2c2dc7c0aa481a883afa4b944c7ab3b85564b6af40b8a82f5e5a --module contract --function create_allowlist_entry
+
+note: you can use the existing package id in env.examples but you'd need o create a new allowlist (POLICY_OBJECT_ID) with the create_allowlist_entry as it would only approve if the caller is the allowlist owner (most basic example possible)
