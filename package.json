@@ -1,0 +1,23 @@
+{
+  "name": "seal-by-examples",
+  "version": "1.0.0",
+  "description": "TypeScript scripts for terminal",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx",
+    "run": "tsx"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@mysten/seal": "0.5.2",
+    "@mysten/sui": "^1.37.6",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}
