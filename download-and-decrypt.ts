@@ -3,8 +3,7 @@ import { SealClient, SealCompatibleClient, SessionKey, NoAccessError, EncryptedO
 import { SuiClient, getFullnodeUrl } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { fromHex } from '@mysten/sui/utils';
-import { readFileSync, writeFileSync } from 'fs';
-import { resolve } from 'path';
+import { writeFileSync } from 'fs';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 
 const DEFAULT_SEAL_SERVERS = [
@@ -12,7 +11,14 @@ const DEFAULT_SEAL_SERVERS = [
   '0xf5d14a81a982144ae441cd7d64b09027f116a468bd36e7eca494f750591623c8',
 ];
 
-
+const AGGREGATORS = [
+  'https://aggregator.walrus-testnet.walrus.space',
+  'https://wal-aggregator-testnet.staketab.org',
+  'https://walrus-testnet-aggregator.redundex.com',
+  'https://walrus-testnet-aggregator.nodes.guru',
+  'https://aggregator.walrus.banansen.dev',
+  'https://walrus-testnet-aggregator.everstake.one',
+];
 
 type MoveCallConstructor = (tx: Transaction, id: string) => void;
 
@@ -28,9 +34,29 @@ function constructMoveCall(packageId: string, policyObjectId: string): MoveCallC
   };
 }
 
+async function downloadBlob(blobId: string): Promise<ArrayBuffer | null> {
+  for (const aggregatorBase of AGGREGATORS) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      const aggregatorUrl = `${aggregatorBase}/v1/blobs/${blobId}`;
+      
+      const response = await fetch(aggregatorUrl, { signal: controller.signal });
+      clearTimeout(timeout);
+      
+      if (response.ok) {
+        return await response.arrayBuffer();
+      }
+    } catch (err) {
+      continue;
+    }
+  }
+  
+  return null;
+}
 
-async function readAndDecrypt(
-  encryptedFilePaths: string[],
+async function downloadAndDecrypt(
+  blobIds: string[],
   sessionKey: SessionKey,
   suiClient: SuiClient,
   sealClient: SealClient,
@@ -38,31 +64,27 @@ async function readAndDecrypt(
   packageId: string,
   policyObjectId: string
 ): Promise<Uint8Array[]> {
-  console.log(`Reading ${encryptedFilePaths.length} encrypted file(s)...`);
+  console.log(`Downloading ${blobIds.length} blob(s)...`);
   
-  const encryptedFiles: (Uint8Array | null)[] = encryptedFilePaths.map((filePath) => {
-    try {
-      const data = readFileSync(resolve(process.cwd(), filePath));
-      return new Uint8Array(data);
-    } catch (err) {
-      console.error(`Failed to read ${filePath}:`, err);
-      return null;
-    }
-  });
+  const downloadResults = await Promise.all(
+    blobIds.map(async (blobId) => {
+      return await downloadBlob(blobId);
+    })
+  );
 
-  const validFiles = encryptedFiles.filter((file): file is Uint8Array => file !== null) as Uint8Array[];
+  const validDownloads = downloadResults.filter((result): result is ArrayBuffer => result !== null);
   
-  console.log(`Read ${validFiles.length} of ${encryptedFilePaths.length} file(s)`);
+  console.log(`Downloaded ${validDownloads.length} of ${blobIds.length} blob(s)`);
   
-  if (validFiles.length === 0) {
-    throw new Error('No encrypted files could be read');
+  if (validDownloads.length === 0) {
+    throw new Error('Cannot retrieve files from Walrus aggregators. Files uploaded more than 1 epoch ago may have been deleted.');
   }
 
   console.log('Fetching decryption keys...');
   
-  for (let i = 0; i < validFiles.length; i += 10) {
-    const batch = validFiles.slice(i, i + 10);
-    const ids = batch.map((enc) => EncryptedObject.parse(enc).id);
+  for (let i = 0; i < validDownloads.length; i += 10) {
+    const batch = validDownloads.slice(i, i + 10);
+    const ids = batch.map((enc) => EncryptedObject.parse(new Uint8Array(enc)).id);
     
     const tx = new Transaction();
     ids.forEach((id) => moveCallConstructor(tx, id));
@@ -84,15 +106,15 @@ async function readAndDecrypt(
   
   const decryptedFiles: Uint8Array[] = [];
   
-  for (const encryptedData of validFiles) {
-    const fullId = EncryptedObject.parse(encryptedData).id;
+  for (const encryptedData of validDownloads) {
+    const fullId = EncryptedObject.parse(new Uint8Array(encryptedData)).id;
     const tx = new Transaction();
     moveCallConstructor(tx, fullId);
     const txBytes = await tx.build({ client: suiClient, onlyTransactionKind: true });
     
     try {
       const decryptedFile = await sealClient.decrypt({
-        data: encryptedData,
+        data: new Uint8Array(encryptedData),
         sessionKey,
         txBytes,
       });
@@ -111,20 +133,18 @@ async function readAndDecrypt(
 async function main() {
   const policyObjectId = process.env.POLICY_OBJECT_ID;
   const packageId = process.env.PACKAGE_ID;
-  const filePaths = process.env.FILE_PATH?.split(',').map(path => path.trim()) || [];
+  const blobIds = process.env.BLOB_IDS?.split(',').map(id => id.trim()) || [];
   const rpcUrl = process.env.RPC_URL || getFullnodeUrl('testnet');
   const privateKey = process.env.PRIVATE_KEY;
   const outputDir = process.env.OUTPUT_DIR || './';
 
-  if (!policyObjectId || !packageId || filePaths.length === 0) {
-    console.error('Missing env vars');
+  if (!policyObjectId || !packageId || blobIds.length === 0) {
+    console.error('Missing required env vars');
     process.exit(1);
   }
 
-  const encryptedFilePaths = filePaths.map(filePath => filePath + '.encrypted');
-
   if (!privateKey) {
-    console.error('pk required');
+    console.error('Requrees private_key');
     process.exit(1);
   }
 
@@ -142,7 +162,7 @@ async function main() {
     const keypair = Ed25519Keypair.fromSecretKey(privateKey);
     const sender = keypair.toSuiAddress();
     
-    console.log(`Creating session key for ${sender}...`);
+    console.log(`Creating session key for ${sender}`);
     
     const sessionKey = await SessionKey.create({
       address: sender,
@@ -151,7 +171,7 @@ async function main() {
       suiClient: suiClient as unknown as SealCompatibleClient,
     });
 
-    console.log('Signing session key message...');
+    console.log('Signing session key message..');
     
     const personalMessage = sessionKey.getPersonalMessage();
     const { signature } = await keypair.signPersonalMessage(personalMessage);
@@ -159,8 +179,8 @@ async function main() {
 
     const moveCallConstructor = constructMoveCall(packageId, policyObjectId);
     
-    const decryptedFiles = await readAndDecrypt(
-      encryptedFilePaths,
+    const decryptedFiles = await downloadAndDecrypt(
+      blobIds,
       sessionKey,
       suiClient,
       sealClient,
@@ -172,7 +192,7 @@ async function main() {
     console.log(`\nDecrypted ${decryptedFiles.length} file(s)`);
     
     for (let i = 0; i < decryptedFiles.length; i++) {
-      const outputPath = `${outputDir}decrypted_without_any_focking_walrus_upload_${i + 1}.png`;
+      const outputPath = `${outputDir}hereisthefockingdecryptedimage_${i + 1}.png`;
       writeFileSync(outputPath, decryptedFiles[i]);
       console.log(`Saved: ${outputPath}`);
     }

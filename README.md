@@ -6,11 +6,19 @@
 
 4. npx tsx encrypt.ts
 
+5. npx tsx decrypt.ts
+
+
+OR WITH WALRUS
+
+
+4. npx tsx encrypt-and-upload.ts
+
 5. Fill in env with BLOB_ID
 
 6. npx tsx publish.ts
 
-7. npx tsx decrypt.ts
+7. npx tsx download-and-decrypt.ts
 
 
 
